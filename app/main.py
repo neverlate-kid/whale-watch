@@ -52,7 +52,7 @@ def get_stock_chart(ticker: str):
             "data": stocks_db[ticker_upper]
         }
     
-    # 如果输入的股票代码不在 8 只白名单里，返回 404 错误
+    # 如果输入的股票代码不在 8 只白名单里，返回 404
     raise HTTPException(
         status_code=404, 
         detail=f"Stock {ticker_upper} not found in whitelist. Please check your config."
