@@ -35,15 +35,45 @@ def root():
         "message": "Whale Watch 本地后端已成功启动！"
     }
 
-@app.get("/api/v1/stocks/{ticker}")
-def get_stock_chart(ticker: str):
+# 🚀 接口 1：轻量级全量列表 (供前端轮播图或雷达池使用)
+@app.get("/api/v1/stocks")
+def get_all_stocks_lightweight():
     """
-    获取单只股票的动静分离图表数据（1年日K + 10年周K）
+    返回日经 225 所有股票的基础信息，剔除庞大的 K 线数组，秒开。
     """
-    # 统一转成大写，比如把 nintendo 变成 7974.T
-    ticker_upper = ticker.upper()
+    stocks_db = load_local_data()
+    lightweight_list = []
     
-    # 动态读取刚刚生成的 json 文件
+    for ticker, data in stocks_db.items():
+        # 计算最新价和涨跌幅（提取 daily_data_1y 的最后两天）
+        daily = data.get("daily_data_1y", [])
+        if len(daily) >= 2:
+            latest_price = daily[-1]["close"]
+            prev_price = daily[-2]["close"]
+            is_up = latest_price >= prev_price
+            change = latest_price - prev_price
+            
+            lightweight_list.append({
+                "ticker": ticker,
+                "nameKey": ticker, # 暂时用 ticker 代替，后续可接字典
+                "price": latest_price,
+                "isUp": is_up,
+                "change": f"{'+' if is_up else ''}{round(change, 2)}"
+            })
+            
+    return {
+        "success": True,
+        "count": len(lightweight_list),
+        "data": lightweight_list
+    }
+
+# 🚀 接口 2：单只股票详情 (供前端 StockChart 渲染使用)
+@app.get("/api/v1/stocks/{ticker}")
+def get_stock_detail(ticker: str):
+    """
+    获取单只股票的完整动静分离图表数据（含 1年日K + 10年周K）
+    """
+    ticker_upper = ticker.upper()
     stocks_db = load_local_data()
     
     if ticker_upper in stocks_db:
@@ -52,8 +82,4 @@ def get_stock_chart(ticker: str):
             "data": stocks_db[ticker_upper]
         }
     
-    # 如果输入的股票代码不在 8 只白名单里，返回 404
-    raise HTTPException(
-        status_code=404, 
-        detail=f"Stock {ticker_upper} not found in whitelist. Please check your config."
-    )
+    raise HTTPException(status_code=404, detail="Stock not found")
