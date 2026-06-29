@@ -1,0 +1,62 @@
+name: Deploy Whale Watch Backend to AWS Lambda
+
+# 触发条件：当 main 分支有代码 push 时触发
+# on:
+#   push:
+#     branches:
+#       - main 
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码 (Checkout Repository)
+        uses: actions/checkout@v3
+
+      - name: 配置 Python 环境
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10' # 请与你在 AWS Lambda 设置的版本保持一致
+
+      - name: 安装依赖并打包 (Build Deployment Package)
+        run: |
+          mkdir package
+          # 将依赖安装到 package 文件夹中
+          pip install -r requirements.txt -t ./package/
+          
+          # 将你写的 Python 源码复制到 package 文件夹中
+          cp -r app/ ./package/app/
+          cp -r data_pipeline/ ./package/data_pipeline/
+          cp nikkei_dict.py ./package/
+          
+          # 进入文件夹并打包成一个 deployment.zip
+          cd package
+          zip -r ../deployment.zip .
+          cd ..
+
+      - name: 配置 AWS 凭证 (Configure AWS Credentials)
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # 👇 请把下面三个 function-name 换成你在 AWS 控制台里真实的 Lambda 函数名
+      - name: 🚀 部署 API 后端 (FastAPI)
+        run: |
+          aws lambda update-function-code \
+            --function-name whale-watch-api \
+            --zip-file fileb://deployment.zip
+
+      - name: 🚀 部署 S3 高频快照机 (每2分钟)
+        run: |
+          aws lambda update-function-code \
+            --function-name whale-watch-s3-updater \
+            --zip-file fileb://deployment.zip
+
+      - name: 🚀 部署 数据库历史同步机 (每天1次)
+        run: |
+          aws lambda update-function-code \
+            --function-name whale-watch-db-sync \
+            --zip-file fileb://deployment.zip
