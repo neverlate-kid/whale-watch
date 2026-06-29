@@ -4,11 +4,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt
 from supabase import create_client, Client
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from nikkei_dict import NIKKEI_225_DICT
 
 # 加载环境变量
-load_dotenv()
+load_dotenv(find_dotenv())
 
 app = FastAPI(
     title="Whale Watch API",
