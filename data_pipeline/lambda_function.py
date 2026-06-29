@@ -4,8 +4,7 @@ import boto3
 import yfinance as yf
 import requests
 from datetime import datetime, timedelta, timezone
-
-from nikkei_dict import nikkei225_dict 
+from nikkei_dict import NIKKEI_225_DICT
 
 BUCKET_NAME = os.environ.get('S3_BUCKET_NAME', '你的S3桶名称') 
 s3 = boto3.client('s3')
@@ -42,7 +41,7 @@ def lambda_handler(event, context):
                 'body': json.dumps({'message': 'Market is closed, skipping.'})
             }
 
-        tickers = list(nikkei225_dict.keys())
+        tickers = list(NIKKEI_225_DICT.keys())
         tickers_str = " ".join(tickers)
 
         session = requests.Session()
