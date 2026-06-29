@@ -83,8 +83,6 @@ def root():
 def get_all_stocks_lightweight():
     """
     轻量级全量列表：供前端 Radar、搜索、首页轮播图使用。
-    剔除庞大的 K 线数组，只返回昨收价、今日基础涨跌，实现秒开。
-    结合 S3 实时数据后，前端将以此为基础计算实时涨跌。
     """
     stocks_db = load_local_data()
     all_stocks = []
@@ -105,7 +103,7 @@ def get_all_stocks_lightweight():
                 "ticker": ticker,
                 "nameKey": ticker, 
                 "price": latest_price,
-                "prev_price": prev_price, # 🌟 核心：前端融合 S3 时需要用这个昨收价
+                "prev_price": prev_price, 
                 "isUp": is_up,
                 "change": f"{'+' if latest_price >= prev_price else ''}{round(change_val, 2)} ({round(change_pct, 2)}%)",
                 "volatility_score": abs(change_pct) 
@@ -121,7 +119,6 @@ def get_all_stocks_lightweight():
 def get_stock_detail(ticker: str):
     """
     单只股票详情：包含 1年日K 和 10年周K 庞大数组。
-    供前端 StockChart 渲染使用，前端拿到后会将 S3 的最新点拼接到数组末尾。
     """
     ticker_upper = ticker.upper()
     stocks_db = load_local_data()
@@ -138,13 +135,29 @@ def get_stock_detail(ticker: str):
 # 🔴 私有路由 (必须携带 Token 才能访问)
 # ==========================================
 
+# 🌟 新增：前端初始化时拉取云端收藏夹
+@app.get("/api/v1/user/favorites")
+def get_user_favorites(user_id: str = Depends(get_current_user)):
+    """
+    获取用户的收藏夹列表
+    """
+    # TODO: 等 Supabase 建好，这里将替换为： SELECT ticker FROM user_favorites WHERE id = user_id
+    print(f"✅ 安全验证通过！获取用户 UUID: {user_id} 的收藏夹数据")
+    
+    # 在数据库搭好前，安全降级返回测试数据供前端闭环联调
+    return {
+        "success": True, 
+        "data": ["9983.T", "9984.T"] 
+    }
+
+
 @app.post("/api/v1/user/favorites")
 def sync_user_favorites(
     favorites: list[str], 
-    user_id: str = Depends(get_current_user) # 👈 加上这行，接口自动拦截非法请求
+    user_id: str = Depends(get_current_user) 
 ):
     """
-    前端同步收藏夹到后端的接口
+    前端发生收藏操作时，同步覆盖到后端
     """
     # TODO: 等 Supabase 建好，这里将把 user_id 和 favorites 写进 Postgres 数据库
     print(f"✅ 安全验证通过！用户 UUID: {user_id} 正在云端同步收藏夹: {favorites}")
