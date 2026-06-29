@@ -61,6 +61,7 @@ def get_all_stocks_lightweight():
                 "ticker": ticker,
                 "nameKey": ticker, # 暂时用 ticker 代替，后续可接字典
                 "price": latest_price,
+                "prev_price": prev_price,
                 "isUp": is_up,
                 "change": f"{'+' if latest_price >= prev_price else ''}{round(change_val, 2)} ({round(change_pct, 2)}%)",
                 "volatility_score": abs(change_pct) # 传给前端，前端自己排序
