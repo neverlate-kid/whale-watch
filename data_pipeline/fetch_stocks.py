@@ -110,5 +110,20 @@ def main():
 
     print(f"🎉 同步任务结束！成功同步: {success_count}/{len(tickers)}")
 
+# ==========================================
+# AWS Lambda 触发入口
+# ==========================================
+def lambda_handler(event, context):
+    print("收到 Lambda 触发事件，开始执行每日同步任务...")
+    main() # 调用主函数
+    return {
+        "statusCode": 200, 
+        "body": "Daily Sync Complete"
+    }
+
+# ==========================================
+# 本地测试触发入口
+# ==========================================
 if __name__ == "__main__":
     main()
+

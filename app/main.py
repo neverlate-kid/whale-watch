@@ -6,6 +6,7 @@ import jwt
 from supabase import create_client, Client
 from dotenv import load_dotenv, find_dotenv
 from nikkei_dict import NIKKEI_225_DICT
+from mangum import Mangum
 
 # 加载环境变量
 load_dotenv(find_dotenv())
@@ -119,3 +120,9 @@ def sync_user_favorites(favorites: list[str], user_id: str = Depends(get_current
         db.table("user_favorites").insert(insert_data).execute()
             
     return {"success": True, "message": "云端同步成功"}
+
+# ==========================================
+# 🚀 AWS Lambda 终极入口
+# ==========================================
+# 🌟 新增：将 FastAPI 应用包裹进 Mangum，作为 Lambda 的触发入口
+handler = Mangum(app)
