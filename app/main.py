@@ -1,18 +1,21 @@
 import os
-import json
 from fastapi import FastAPI, Depends, HTTPException, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt
+from supabase import create_client, Client
+from dotenv import load_dotenv
 from nikkei_dict import NIKKEI_225_DICT
+
+# 加载环境变量
+load_dotenv()
 
 app = FastAPI(
     title="Whale Watch API",
-    description="日股异动全球化警报系统 (Zero-Dollar Stack 本地过渡版)",
+    description="日股异动全球化警报系统 (正式生产环境版)",
     version="1.0.0"
 )
 
-# 允许跨域（未来 React Native 模拟器联调必不可少）
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,144 +25,97 @@ app.add_middleware(
 )
 
 # ==========================================
-# 📂 历史数据底座 (未来将迁移至 Supabase)
+# ☁️ 正式版数据库初始化 (Supabase PostgreSQL)
 # ==========================================
-DATA_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data_pipeline", "mock_stock_data.json")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
-def load_local_data():
-    """
-    辅助函数：从本地加载 fetch_stocks.py 抓取的真实历史 K 线数据。
-    TODO: 等 Supabase 数据库建好后，这个函数将替换为查询 Supabase 的 ticker_charts 表。
-    """
-    if not os.path.exists(DATA_PATH):
-        print(f"⚠️ 警告: 找不到历史数据文件 {DATA_PATH}。请先运行 fetch_stocks.py")
-        return {}
-    with open(DATA_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+# 生产环境：如果没有配置 Key，后端会以 None 状态启动并返回 500，提醒你配置
+db: Client | None = None
+if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+    db = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 # ==========================================
-# 🔐 JWT 安全守卫 (Supabase Auth)
+# 🔐 JWT 安全守卫
 # ==========================================
 security = HTTPBearer()
-
-# TODO: 等配置好 Supabase 后，把 Project Settings -> API 里的 JWT Secret 填入环境变量
-SUPABASE_JWT_SECRET = os.environ.get(
-    "SUPABASE_JWT_SECRET", 
-    "your-super-secret-jwt-token-with-at-least-32-characters-long" 
-)
+SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Security(security)):
-    """
-    核心鉴权依赖：解析前端通过 authFetch 传来的 Supabase JWT Token
-    """
     token = credentials.credentials
+    if not SUPABASE_JWT_SECRET:
+        raise HTTPException(status_code=500, detail="JWT Secret not configured")
+        
     try:
-        payload = jwt.decode(
-            token, 
-            SUPABASE_JWT_SECRET, 
-            algorithms=["HS256"], 
-            audience="authenticated"
-        )
-        return payload['sub'] # 返回用户的 UUID
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="登录已过期 (Token expired)")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="无效的凭据 (Invalid token)")
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"], audience="authenticated")
+        return payload['sub']
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 # ==========================================
-# 🟢 公开路由 (无需登录，供前端画图和列表使用)
+# 🚀 生产级接口
 # ==========================================
-
-@app.get("/")
-def root():
-    return {
-        "status": "healthy",
-        "message": "Whale Watch 本地后端已成功启动！"
-    }
 
 @app.get("/api/v1/stocks")
-def get_all_stocks_lightweight():
+def get_all_stocks():
     """
-    轻量级全量列表：供前端 Radar、搜索、首页轮播图使用。
+    生产环境：直接读取 Supabase 数据库汇总表
     """
-    stocks_db = load_local_data()
-    all_stocks = []
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not connected")
     
-    for ticker, data in stocks_db.items():
-        if ticker not in NIKKEI_225_DICT:  
-            continue
-            
-        daily = data.get("daily_data_1y", [])
-        if len(daily) >= 2:
-            latest_price = daily[-1]["close"]
-            prev_price = daily[-2]["close"]
-            is_up = latest_price >= prev_price
-            change_val = latest_price - prev_price
-            change_pct = (change_val / prev_price) * 100
-            
-            all_stocks.append({
-                "ticker": ticker,
-                "nameKey": ticker, 
-                "price": latest_price,
-                "prev_price": prev_price, 
-                "isUp": is_up,
-                "change": f"{'+' if latest_price >= prev_price else ''}{round(change_val, 2)} ({round(change_pct, 2)}%)",
-                "volatility_score": abs(change_pct) 
-            })
-            
-    return {
-        "success": True,
-        "count": len(all_stocks),
-        "data": all_stocks
-    }
+    try:
+        # 直接读取 stocks_summary 表，这是你的 Python 爬虫 (fetch_stocks.py) 应该存入的地方
+        res = db.table("stocks_summary").select("*").execute()
+        return {"success": True, "data": res.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/stocks/{ticker}")
 def get_stock_detail(ticker: str):
     """
-    单只股票详情：包含 1年日K 和 10年周K 庞大数组。
+    生产环境：直接读取 Supabase 数据库详细数据表
     """
-    ticker_upper = ticker.upper()
-    stocks_db = load_local_data()
-    
-    if ticker_upper in stocks_db:
-        return {
-            "success": True,
-            "data": stocks_db[ticker_upper]
-        }
-    
-    raise HTTPException(status_code=404, detail="Stock not found")
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not connected")
+        
+    try:
+        # 读取 ticker_charts 表
+        res = db.table("ticker_charts").select("*").eq("ticker", ticker.upper()).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Stock not found")
+        return {"success": True, "data": res.data[0]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ==========================================
-# 🔴 私有路由 (必须携带 Token 才能访问)
+# 🔴 私有路由
 # ==========================================
 
-# 🌟 新增：前端初始化时拉取云端收藏夹
 @app.get("/api/v1/user/favorites")
 def get_user_favorites(user_id: str = Depends(get_current_user)):
     """
-    获取用户的收藏夹列表
+    从 Supabase 实时拉取用户收藏
     """
-    # TODO: 等 Supabase 建好，这里将替换为： SELECT ticker FROM user_favorites WHERE id = user_id
-    print(f"✅ 安全验证通过！获取用户 UUID: {user_id} 的收藏夹数据")
-    
-    # 在数据库搭好前，安全降级返回测试数据供前端闭环联调
-    return {
-        "success": True, 
-        "data": ["9983.T", "9984.T"] 
-    }
-
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not connected")
+        
+    res = db.table("user_favorites").select("ticker").eq("user_id", user_id).execute()
+    favorites_list = [item["ticker"] for item in res.data]
+    return {"success": True, "data": favorites_list}
 
 @app.post("/api/v1/user/favorites")
-def sync_user_favorites(
-    favorites: list[str], 
-    user_id: str = Depends(get_current_user) 
-):
+def sync_user_favorites(favorites: list[str], user_id: str = Depends(get_current_user)):
     """
-    前端发生收藏操作时，同步覆盖到后端
+    将用户收藏同步存入 Supabase
     """
-    # TODO: 等 Supabase 建好，这里将把 user_id 和 favorites 写进 Postgres 数据库
-    print(f"✅ 安全验证通过！用户 UUID: {user_id} 正在云端同步收藏夹: {favorites}")
-    
-    return {"success": True, "message": "收藏夹云端同步成功"}
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not connected")
+        
+    # 执行原子性删除与插入
+    db.table("user_favorites").delete().eq("user_id", user_id).execute()
+    if favorites:
+        insert_data = [{"user_id": user_id, "ticker": t} for t in favorites]
+        db.table("user_favorites").insert(insert_data).execute()
+            
+    return {"success": True, "message": "云端同步成功"}
