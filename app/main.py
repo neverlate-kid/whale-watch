@@ -1,12 +1,16 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from nikkei_dict import NIKKEI_225_TICKERS
-import json
 import os
+import json
+from fastapi import FastAPI, Depends, HTTPException, Security
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import jwt
+
+# 请确保你的同级目录下有 nikkei_dict.py
+from nikkei_dict import NIKKEI_225_TICKERS 
 
 app = FastAPI(
     title="Whale Watch API",
-    description="日股异动全球化警报系统的本地测试接口",
+    description="日股异动全球化警报系统 (Zero-Dollar Stack 本地过渡版)",
     version="1.0.0"
 )
 
@@ -19,15 +23,56 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 获取本地 JSON 数据的绝对路径
+# ==========================================
+# 📂 历史数据底座 (未来将迁移至 Supabase)
+# ==========================================
 DATA_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data_pipeline", "mock_stock_data.json")
 
 def load_local_data():
-    """辅助函数：从本地加载洗好的股票 JSON"""
+    """
+    辅助函数：从本地加载 fetch_stocks.py 抓取的真实历史 K 线数据。
+    TODO: 等 Supabase 数据库建好后，这个函数将替换为查询 Supabase 的 ticker_charts 表。
+    """
     if not os.path.exists(DATA_PATH):
+        print(f"⚠️ 警告: 找不到历史数据文件 {DATA_PATH}。请先运行 fetch_stocks.py")
         return {}
     with open(DATA_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
+
+# ==========================================
+# 🔐 JWT 安全守卫 (Supabase Auth)
+# ==========================================
+security = HTTPBearer()
+
+# TODO: 等配置好 Supabase 后，把 Project Settings -> API 里的 JWT Secret 填入环境变量
+SUPABASE_JWT_SECRET = os.environ.get(
+    "SUPABASE_JWT_SECRET", 
+    "your-super-secret-jwt-token-with-at-least-32-characters-long" 
+)
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Security(security)):
+    """
+    核心鉴权依赖：解析前端通过 authFetch 传来的 Supabase JWT Token
+    """
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(
+            token, 
+            SUPABASE_JWT_SECRET, 
+            algorithms=["HS256"], 
+            audience="authenticated"
+        )
+        return payload['sub'] # 返回用户的 UUID
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="登录已过期 (Token expired)")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="无效的凭据 (Invalid token)")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+# ==========================================
+# 🟢 公开路由 (无需登录，供前端画图和列表使用)
+# ==========================================
 
 @app.get("/")
 def root():
@@ -36,19 +81,20 @@ def root():
         "message": "Whale Watch 本地后端已成功启动！"
     }
 
-# 🚀 接口 1：轻量级全量列表 (供前端轮播图或雷达池使用)
 @app.get("/api/v1/stocks")
 def get_all_stocks_lightweight():
     """
-    返回日经 225 所有股票的基础信息，剔除庞大的 K 线数组，秒开。
+    轻量级全量列表：供前端 Radar、搜索、首页轮播图使用。
+    剔除庞大的 K 线数组，只返回昨收价、今日基础涨跌，实现秒开。
+    结合 S3 实时数据后，前端将以此为基础计算实时涨跌。
     """
     stocks_db = load_local_data()
     all_stocks = []
     
     for ticker, data in stocks_db.items():
-        if ticker not in NIKKEI_225_TICKERS:  # 过滤非日经225股票
+        if ticker not in NIKKEI_225_TICKERS:  
             continue
-        # 计算最新价和涨跌幅（提取 daily_data_1y 的最后两天）
+            
         daily = data.get("daily_data_1y", [])
         if len(daily) >= 2:
             latest_price = daily[-1]["close"]
@@ -59,12 +105,12 @@ def get_all_stocks_lightweight():
             
             all_stocks.append({
                 "ticker": ticker,
-                "nameKey": ticker, # 暂时用 ticker 代替，后续可接字典
+                "nameKey": ticker, 
                 "price": latest_price,
-                "prev_price": prev_price,
+                "prev_price": prev_price, # 🌟 核心：前端融合 S3 时需要用这个昨收价
                 "isUp": is_up,
                 "change": f"{'+' if latest_price >= prev_price else ''}{round(change_val, 2)} ({round(change_pct, 2)}%)",
-                "volatility_score": abs(change_pct) # 传给前端，前端自己排序
+                "volatility_score": abs(change_pct) 
             })
             
     return {
@@ -73,11 +119,11 @@ def get_all_stocks_lightweight():
         "data": all_stocks
     }
 
-# 🚀 接口 2：单只股票详情 (供前端 StockChart 渲染使用)
 @app.get("/api/v1/stocks/{ticker}")
 def get_stock_detail(ticker: str):
     """
-    获取单只股票的完整动静分离图表数据（含 1年日K + 10年周K）
+    单只股票详情：包含 1年日K 和 10年周K 庞大数组。
+    供前端 StockChart 渲染使用，前端拿到后会将 S3 的最新点拼接到数组末尾。
     """
     ticker_upper = ticker.upper()
     stocks_db = load_local_data()
@@ -89,3 +135,20 @@ def get_stock_detail(ticker: str):
         }
     
     raise HTTPException(status_code=404, detail="Stock not found")
+
+# ==========================================
+# 🔴 私有路由 (必须携带 Token 才能访问)
+# ==========================================
+
+@app.post("/api/v1/user/favorites")
+def sync_user_favorites(
+    favorites: list[str], 
+    user_id: str = Depends(get_current_user) # 👈 加上这行，接口自动拦截非法请求
+):
+    """
+    前端同步收藏夹到后端的接口
+    """
+    # TODO: 等 Supabase 建好，这里将把 user_id 和 favorites 写进 Postgres 数据库
+    print(f"✅ 安全验证通过！用户 UUID: {user_id} 正在云端同步收藏夹: {favorites}")
+    
+    return {"success": True, "message": "收藏夹云端同步成功"}
