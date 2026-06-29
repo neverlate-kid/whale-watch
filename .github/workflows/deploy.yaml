@@ -1,10 +1,10 @@
 name: Deploy Whale Watch Backend to AWS Lambda
 
 # 触发条件：当 main 分支有代码 push 时触发
-# on:
-#   push:
-#     branches:
-#       - main 
+on:
+  push:
+    branches:
+      - main1
 
 jobs:
   deploy:
