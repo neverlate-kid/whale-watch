@@ -4,9 +4,7 @@ from fastapi import FastAPI, Depends, HTTPException, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt
-
-# 请确保你的同级目录下有 nikkei_dict.py
-from nikkei_dict import NIKKEI_225_TICKERS 
+from nikkei_dict import NIKKEI_225_DICT
 
 app = FastAPI(
     title="Whale Watch API",
@@ -92,7 +90,7 @@ def get_all_stocks_lightweight():
     all_stocks = []
     
     for ticker, data in stocks_db.items():
-        if ticker not in NIKKEI_225_TICKERS:  
+        if ticker not in NIKKEI_225_DICT:  
             continue
             
         daily = data.get("daily_data_1y", [])
