@@ -7,6 +7,9 @@ from supabase import create_client, Client
 from dotenv import load_dotenv, find_dotenv
 from nikkei_dict import NIKKEI_225_DICT
 from mangum import Mangum
+import urllib.request
+import json
+from deep_translator import GoogleTranslator
 
 # 加载环境变量
 load_dotenv(find_dotenv())
@@ -88,6 +91,59 @@ def get_stock_detail(ticker: str):
         return {"success": True, "data": res.data[0]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/api/v1/stocks/{ticker}/news")
+def get_stock_news(ticker: str, lang: str = "ja"):
+    """
+    零成本多语言新闻引擎：拉取雅虎新闻，并实时批量翻译为前端指定的语言
+    """
+    try:
+        url = f"https://query2.finance.yahoo.com/v1/finance/search?q={ticker.upper()}&newsCount=8"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode())
+            
+        news_items = data.get('news', [])
+        
+        # 1. 语言映射映射表 (前端缩写 -> Google Translate 支持的代码)
+        lang_map = {
+            "zh": "zh-CN",
+            "en": "en",
+            "ja": "ja",
+            "ko": "ko"
+        }
+        target_lang = lang_map.get(lang[:2], "en") # 默认回退到英文
+
+        clean_news = []
+        
+        # 2. 提取所有需要翻译的标题 (为批量翻译做准备，极大提升速度)
+        titles = [item.get("title", "") for item in news_items]
+        
+        # 3. 免费批量翻译引擎 (如果目标语言本来就是日语，雅虎日文版就无需翻译，节省算力)
+        translated_titles = titles
+        if target_lang != "ja" and titles:
+            try:
+                # source='auto' 会自动识别雅虎返回的是英文还是日文
+                translated_titles = GoogleTranslator(source='auto', target=target_lang).translate_batch(titles)
+            except Exception as e:
+                print("翻译服务暂时拥堵，回退到原文:", e)
+                
+        # 4. 组装翻译后的数据
+        for idx, item in enumerate(news_items):
+            # 防止翻译失败导致数组越界，做个安全兜底
+            final_title = translated_titles[idx] if idx < len(translated_titles) and translated_titles[idx] else item.get("title", "")
+            
+            clean_news.append({
+                "title": final_title,
+                "publisher": item.get("publisher"), # 媒体来源一般是专有名词，不强求翻译
+                "link": item.get("link"),
+                "publishTime": item.get("providerPublishTime")
+            })
+            
+        return {"success": True, "data": clean_news}
+    except Exception as e:
+        return {"success": False, "data": [], "error": str(e)}
 
 # ==========================================
 # 🔴 私有路由
