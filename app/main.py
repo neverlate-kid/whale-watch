@@ -224,6 +224,16 @@ def sync_user_device(req: PushTokenRequest, user_id: str = Depends(get_current_u
             
     return {"success": True, "message": "设备及权限信息同步成功"}
 
+@app.delete("/api/v1/user/device/{push_token}")
+def unregister_device(push_token: str, user_id: str = Depends(get_current_user)):
+    """用户登出时，注销当前设备的推送 Token"""
+    if not db:
+        raise HTTPException(status_code=503)
+        
+    # 只允许删除属于自己的 Token
+    db.table("user_devices").delete().eq("push_token", push_token).eq("user_id", user_id).execute()
+    return {"success": True}
+
 # ==========================================
 # 🚀 AWS Lambda 终极入口
 # ==========================================
