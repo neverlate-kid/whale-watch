@@ -10,6 +10,7 @@ from mangum import Mangum
 import urllib.request
 import json
 from deep_translator import GoogleTranslator
+from pydantic import BaseModel
 
 # 加载环境变量
 if os.environ.get("AWS_EXECUTION_ENV") is None: load_dotenv()
@@ -27,6 +28,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class PushTokenRequest(BaseModel):
+    push_token: str
+    language: str
+    is_premium: bool = False
 
 # ==========================================
 # ☁️ 正式版数据库初始化 (Supabase PostgreSQL)
@@ -197,6 +203,26 @@ def sync_user_favorites(favorites: list[str], user_id: str = Depends(get_current
         db.table("user_favorites").insert(insert_data).execute()
             
     return {"success": True, "message": "云端同步成功"}
+
+@app.post("/api/v1/user/device")
+def sync_user_device(req: PushTokenRequest, user_id: str = Depends(get_current_user)):
+    """
+    接收前端上报的 Expo Push Token、语言环境及会员状态
+    """
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not connected")
+    
+    lang = req.language[:2] if req.language else 'en'
+    
+    # 🌟 将会员状态一并存入/更新
+    db.table("user_devices").upsert({
+        "user_id": user_id,
+        "push_token": req.push_token,
+        "language": lang,
+        "is_premium": req.is_premium
+    }).execute()
+            
+    return {"success": True, "message": "设备及权限信息同步成功"}
 
 # ==========================================
 # 🚀 AWS Lambda 终极入口
