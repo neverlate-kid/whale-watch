@@ -88,6 +88,33 @@ def get_stock_data(ticker_symbol):
     
     return summary_data, chart_data
 
+def fetch_all_from_supabase(table_name: str, select_query: str = "*", chunk_size: int = 1000):
+    """
+    🛠️ 突破 Supabase 1000 行限制的分页拉取引擎
+    """
+    all_data = []
+    start = 0
+    
+    while True:
+        # 设定单次拉取的区间，例如 0-999, 1000-1999
+        end = start + chunk_size - 1
+        res = db.table(table_name).select(select_query).range(start, end).execute()
+        data = res.data
+        
+        # 如果没拉到数据，直接退出循环
+        if not data:
+            break
+            
+        all_data.extend(data)
+        
+        # 如果拉取到的数据数量小于请求的 chunk_size，说明已经触底，退出循环
+        if len(data) < chunk_size:
+            break
+            
+        start += chunk_size
+        
+    return all_data
+
 def send_daily_push_notifications():
     """
     双轨制每日推送：
@@ -101,18 +128,20 @@ def send_daily_push_notifications():
     global_top_movers = res_global.data
     if not global_top_movers: return
 
-    # 🌟 2. 获取当天所有 225 只股票的最新数据作为“底层字典”，方便给会员算自选股
-    res_all = db.table("stocks_summary").select("*").execute()
-    all_stocks_dict = {s["ticker"]: s for s in res_all.data}
+    # 🌟 2. 获取当天所有 225 只股票的最新数据作为“底层字典”
+    # 这里也可以换成分页，防止以后股票总数超过 1000 只
+    all_stocks_data = fetch_all_from_supabase("stocks_summary")
+    all_stocks_dict = {s["ticker"]: s for s in all_stocks_data}
 
-    # 🌟 3. 拉取全量用户的设备信息 (Token, 语言, 是否是Premium)
-    users_res = db.table("user_devices").select("*").execute()
-    if not users_res.data: return
+    # 🌟 3. 安全拉取全量用户的设备信息 (彻底规避 1000 行截断风险)
+    users_data = fetch_all_from_supabase("user_devices")
+    if not users_data: return
 
-    # 🌟 4. 拉取全量用户的自选股清单，并在内存中按用户分组
-    fav_res = db.table("user_favorites").select("*").execute()
+    # 🌟 4. 安全拉取全量用户的自选股清单 (彻底规避 1000 行截断风险)
+    fav_data = fetch_all_from_supabase("user_favorites")
+    
     user_favs = {}
-    for row in fav_res.data:
+    for row in fav_data:
         uid = row["user_id"]
         ticker = row["ticker"]
         # 只保留今天在底座库里有的股票
@@ -143,7 +172,7 @@ def send_daily_push_notifications():
     expo_messages = []
     
     # 🌟 6. 为每一位用户定制生成推送
-    for user in users_res.data:
+    for user in users_data:
         token = user.get("push_token")
         if not token or not token.startswith("ExponentPushToken"): continue
             
