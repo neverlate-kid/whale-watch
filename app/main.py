@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt
 from supabase import create_client, Client
-from dotenv import load_dotenv, find_dotenv
+from dotenv import load_dotenv
 from nikkei_dict import NIKKEI_225_DICT
 from mangum import Mangum
 import urllib.request
@@ -12,7 +12,7 @@ import json
 from deep_translator import GoogleTranslator
 
 # 加载环境变量
-load_dotenv(find_dotenv())
+if os.environ.get("AWS_EXECUTION_ENV") is None: load_dotenv()
 
 app = FastAPI(
     title="Whale Watch API",
@@ -45,16 +45,37 @@ if SUPABASE_URL and SUPABASE_SERVICE_KEY:
 security = HTTPBearer()
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
 
+# 确保 URL 末尾没有多余的斜杠，防止拼接错误
+SUPABASE_URL_CLEAN = os.environ.get("SUPABASE_URL", "").rstrip("/")
+
 def get_current_user(credentials: HTTPAuthorizationCredentials = Security(security)):
     token = credentials.credentials
-    if not SUPABASE_JWT_SECRET:
-        raise HTTPException(status_code=500, detail="JWT Secret not configured")
+    
+    if not SUPABASE_JWT_SECRET or not SUPABASE_URL_CLEAN:
+        raise HTTPException(status_code=500, detail="JWT Configuration missing")
+        
+    # 🌟 核心：计算 Supabase 预期的合法 Issuer
+    expected_issuer = f"{SUPABASE_URL_CLEAN}/auth/v1"
         
     try:
-        payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"], audience="authenticated")
+        payload = jwt.decode(
+            token, 
+            SUPABASE_JWT_SECRET, 
+            algorithms=["HS256"], 
+            audience="authenticated",
+            issuer=expected_issuer  # 👈 强制校验签发者
+        )
         return payload['sub']
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        
+    # 细化错误捕获，方便生产环境排查问题
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.InvalidIssuerError:
+        raise HTTPException(status_code=401, detail="Invalid token issuer (Cross-project attack blocked)")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token structure")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
 # ==========================================
 # 🚀 生产级接口

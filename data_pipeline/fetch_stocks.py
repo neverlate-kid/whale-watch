@@ -1,13 +1,13 @@
 import os
 import yfinance as yf
 import pandas as pd
-from dotenv import load_dotenv, find_dotenv
+from dotenv import load_dotenv
 from supabase import create_client, Client
 from nikkei_dict import NIKKEI_225_DICT
 import time
 
 # 加载环境变量 (确保根目录有 .env 文件)
-load_dotenv(find_dotenv())
+if os.environ.get("AWS_EXECUTION_ENV") is None: load_dotenv()
 
 # 初始化 Supabase 客户端
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
